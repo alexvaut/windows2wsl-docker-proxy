@@ -1,8 +1,8 @@
 # windows2wsl-docker-proxy
 
-A small TCP proxy written in Go to adapt windows docker clients to a linux docker running in WSL.
+A TCP proxy written in Go to adapt windows docker clients to a linux docker running in WSL.
 
-[Original project](https://github.com/jpillora/go-tcp-proxy)
+[Original generic TCP proxy](https://github.com/jpillora/go-tcp-proxy)
 
 ## Install
 
@@ -32,7 +32,7 @@ Usage of tcp-proxy:
 ```
 ### Simple Example
 
-Since HTTP runs over TCP, we can also use `tcp-proxy` as a primitive HTTP proxy:
+Opens port 2376 and redirect to docker running on 2375
 
 ```
 $ tcp-proxy -r localhost:2375 -l :2376
