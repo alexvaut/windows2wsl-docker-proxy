@@ -12,7 +12,7 @@ import (
 )
 
 type Connection struct {
-	IsMultiplexStream bool
+	Same bool //true if the payload must remain the same between client and server.
 }
 
 // Proxy - Manages a Proxy connection, piping data between local and remote.
@@ -153,7 +153,7 @@ func (p *Proxy) pipe(src, dst io.ReadWriter, conn *Connection) {
 
 		eof := false
 		first := true
-		for first || (!eof && !conn.IsMultiplexStream) {
+		for first || (!eof && !conn.Same) {
 			n, err := src.Read(buff)
 			if first {
 				p.Log.Trace(header)
@@ -161,7 +161,7 @@ func (p *Proxy) pipe(src, dst io.ReadWriter, conn *Connection) {
 			}
 			p.Log.Trace(prefix+"buffer read: %d", n)
 			if err != nil {
-				p.err(prefix+"Read failed '%s'\n", err, conn.IsMultiplexStream && isSending && err == io.EOF) //in case it's streaming & sending data & EOF, we wait for the receiving EOF to stop the connection
+				p.err(prefix+"Read failed '%s'\n", err, isSending && err == io.EOF) //in case it's streaming & sending data & EOF, we wait for the receiving EOF to stop the connection
 				return
 			}
 			eof = n < 1 || buff[n-1] == 10
@@ -181,7 +181,7 @@ func (p *Proxy) pipe(src, dst io.ReadWriter, conn *Connection) {
 			b = p.Replacer(b)
 		}
 
-		if !conn.IsMultiplexStream {
+		if !conn.Same {
 			if isSending {
 				//bytes sent
 				//Replace windows drive into linux mount foe ex C:\test -> /mnt/c/test
@@ -193,6 +193,16 @@ func (p *Proxy) pipe(src, dst io.ReadWriter, conn *Connection) {
 					})
 					return ret
 				}))
+
+				if strings.Contains(strings.ToLower(getHttpHeader(string(b))), strings.ToLower("Accept-Encoding: gzip, deflate")) {
+					p.Log.Debug("MultiplexStream: true")
+					conn.Same = true
+				}
+
+				if strings.Contains(strings.ToLower(getHttpHeader(string(b))), strings.ToLower("Upgrade: h2c")) {
+					p.Log.Debug("MultiplexStream: true")
+					conn.Same = true
+				}
 
 			} else {
 
@@ -209,7 +219,7 @@ func (p *Proxy) pipe(src, dst io.ReadWriter, conn *Connection) {
 
 				if strings.Contains(strings.ToLower(getHttpHeader(string(b))), strings.ToLower("Content-Type: application/vnd.docker.raw-stream")) {
 					p.Log.Debug("MultiplexStream: true")
-					conn.IsMultiplexStream = true
+					conn.Same = true
 				}
 
 			}
@@ -222,7 +232,7 @@ func (p *Proxy) pipe(src, dst io.ReadWriter, conn *Connection) {
 		//write out result
 		n, err := dst.Write(b)
 		if err != nil {
-			p.err("Write failed '%s'\n", err, conn.IsMultiplexStream)
+			p.err("Write failed '%s'\n", err, conn.Same)
 			return
 		}
 		if isSending {

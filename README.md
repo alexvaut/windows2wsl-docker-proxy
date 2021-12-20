@@ -4,6 +4,12 @@ A small TCP proxy written in Go
 
 This project was intended for debugging text-based protocols. The next version will address binary protocols.
 
+Compatible with Docker Engine API 1.41. https://docs.docker.com/engine/api/v1.41/
+Especially with protocol switching (HTTP code 101):
+- interactive session that "hijacks the HTTP connection to HTTP2 transport"
+- container attached where "endpoint hijacks the HTTP connection to transport stdin, stdout, and stderr on the same socket".
+
+
 ## Install
 
 **Binaries**
@@ -11,6 +17,15 @@ This project was intended for debugging text-based protocols. The next version w
 Download [the latest release](https://github.com/jpillora/go-tcp-proxy/releases/latest), or
 
 Install latest release now with `curl https://i.jpillora.com/go-tcp-proxy! | bash`
+
+$env:GOARCH="amd64"
+$env:GOOS="windows"
+go build -o ./bin/proxy-docker.exe .\cmd\tcp-proxy\main.go
+
+$env:GOARCH="amd64"
+$env:GOOS="linux"
+go build -o ./bin/proxy-docker .\cmd\tcp-proxy\main.go
+
 
 **Source**
 
