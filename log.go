@@ -2,6 +2,8 @@ package proxy
 
 import (
 	"fmt"
+	"os"
+	"regexp"
 
 	"github.com/mgutz/ansi"
 )
@@ -35,6 +37,7 @@ type ColorLogger struct {
 	Verbose     bool
 	Prefix      string
 	Color       bool
+	File        *os.File
 }
 
 // Trace - Log a very verbose trace message
@@ -68,4 +71,13 @@ func (l ColorLogger) output(color, f string, args ...interface{}) {
 		f = ansi.Color(f, color)
 	}
 	fmt.Printf(fmt.Sprintf("%s%s\n", l.Prefix, f), args...)
+
+	re, _ := regexp.Compile("[^\x00-\x7F\\n\\r]+")
+
+	s := fmt.Sprintf(fmt.Sprintf("%s%s", l.Prefix, f), args...)
+	s = re.ReplaceAllString(s, ".")
+	t := s + "\n"
+
+	l.File.WriteString(t)
+	l.File.Sync()
 }

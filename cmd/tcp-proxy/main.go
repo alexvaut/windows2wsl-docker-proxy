@@ -62,6 +62,9 @@ func main() {
 		*verbose = true
 	}
 
+	logFile, _ := os.Create("C:/tmp/dockerProxy.log.txt")
+	defer logFile.Close()
+
 	for {
 		conn, err := listener.AcceptTCP()
 		if err != nil {
@@ -70,12 +73,20 @@ func main() {
 		}
 		connid++
 
+		log := proxy.ColorLogger{
+			Verbose:     *verbose,
+			VeryVerbose: *veryverbose,
+			Prefix:      fmt.Sprintf("Connection #%03d ", connid),
+			Color:       *colors,
+			File:        logFile,
+		}
+
 		var p *proxy.Proxy
 		if *unwrapTLS {
 			logger.Info("Unwrapping TLS")
-			p = proxy.NewTLSUnwrapped(conn, laddr, raddr, *remoteAddr)
+			p = proxy.NewTLSUnwrapped(conn, laddr, raddr, *remoteAddr, &log)
 		} else {
-			p = proxy.New(conn, laddr, raddr)
+			p = proxy.New(conn, laddr, raddr, &log)
 		}
 
 		p.Matcher = matcher
@@ -83,12 +94,6 @@ func main() {
 
 		p.Nagles = *nagles
 		p.OutputHex = *hex
-		p.Log = proxy.ColorLogger{
-			Verbose:     *verbose,
-			VeryVerbose: *veryverbose,
-			Prefix:      fmt.Sprintf("Connection #%03d ", connid),
-			Color:       *colors,
-		}
 
 		go p.Start()
 	}
