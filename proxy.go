@@ -6,7 +6,6 @@ import (
 	"io"
 	"net"
 	"regexp"
-	"strconv"
 	"strings"
 	"unicode"
 )
@@ -127,12 +126,12 @@ func (p *Proxy) pipe(src, dst io.ReadWriter, conn *Connection) {
 	var prefix string
 
 	if isSending {
-		dataDirection = ">>> %d bytes sent%s"
-		header = ">>> Sending:"
+		dataDirection = ">>> ## => Total of %d bytes sent%s"
+		header = ">>> ## Sending:"
 		prefix = ">>> "
 	} else {
-		dataDirection = "<<< %d bytes received%s"
-		header = "<<< Receiving:"
+		dataDirection = "<<< ## => Total of %d bytes received%s"
+		header = "<<< ## Receiving:"
 		prefix = "<<< "
 	}
 
@@ -146,6 +145,7 @@ func (p *Proxy) pipe(src, dst io.ReadWriter, conn *Connection) {
 	}
 
 	//directional copy
+	chunked := false
 	buff := make([]byte, 0xfffff)
 	for {
 
@@ -153,19 +153,42 @@ func (p *Proxy) pipe(src, dst io.ReadWriter, conn *Connection) {
 
 		eof := false
 		first := true
-		for first || (!eof && !conn.Same) {
+
+		for !eof {
 			n, err := src.Read(buff)
 			if first {
 				p.Log.Trace(header)
 				first = false
 			}
-			p.Log.Trace(prefix+"buffer read: %d", n)
+			p.Log.Trace(prefix+"   Buffer read: %d", n)
+			p.Log.Trace(byteFormat, buff[:n])
 			if err != nil {
 				p.err(prefix+"Read failed '%s'\n", err, isSending && err == io.EOF) //in case it's streaming & sending data & EOF, we wait for the receiving EOF to stop the connection
 				return
 			}
-			eof = n < 1 || buff[n-1] == 10
+
 			bu.Write(buff[:n])
+			complete := false
+
+			if !conn.Same {
+				if !chunked {
+					complete, chunked = isComplete(string(bu.Bytes()), isSending)
+					if chunked {
+						p.Log.Trace("   Start of Chunk stream detected")
+					}
+				}
+
+				if chunked {
+					lastChunkSent := false
+					complete, lastChunkSent = isLastChunkComplete(string(bu.Bytes()))
+					if lastChunkSent {
+						chunked = false
+						p.Log.Trace("   End of Chunk stream detected")
+					}
+				}
+			}
+
+			eof = conn.Same || complete
 		}
 
 		n := bu.Len()
@@ -193,11 +216,6 @@ func (p *Proxy) pipe(src, dst io.ReadWriter, conn *Connection) {
 					})
 					return ret
 				}))
-
-				if strings.Contains(strings.ToLower(getHttpHeader(string(b))), strings.ToLower("Accept-Encoding: gzip, deflate")) {
-					p.Log.Debug("MultiplexStream: true")
-					conn.Same = true
-				}
 
 				if strings.Contains(strings.ToLower(getHttpHeader(string(b))), strings.ToLower("Upgrade: h2c")) {
 					p.Log.Debug("MultiplexStream: true")
@@ -227,7 +245,6 @@ func (p *Proxy) pipe(src, dst io.ReadWriter, conn *Connection) {
 
 		//show output
 		p.Log.Debug(dataDirection, n, "")
-		p.Log.Trace(byteFormat, b)
 
 		//write out result
 		n, err := dst.Write(b)
@@ -241,108 +258,4 @@ func (p *Proxy) pipe(src, dst io.ReadWriter, conn *Connection) {
 			p.receivedBytes += uint64(n)
 		}
 	}
-}
-
-func (p *Proxy) editHttpMessage(httpMessage string, edit func(payload string) string) string {
-	//find payload
-	start := getHttpPayloadStart(httpMessage)
-	if start < 0 {
-		return httpMessage
-	}
-	payload := httpMessage[start:]
-	//convert
-
-	header := httpMessage[0:start]
-	isChunked := strings.Contains(strings.ToLower(header), strings.ToLower("Transfer-Encoding: chunked"))
-
-	var editedHttpMessage string
-	if isChunked {
-		//chunked
-		newPayload := p.editChunkedPayload(payload, edit)
-		editedHttpMessage = header + newPayload
-	} else {
-		//not chunked
-		newPayload := edit(payload)
-		editedHttpMessage = header + newPayload
-		editedHttpMessage = p.fixContentLength(httpMessage, editedHttpMessage)
-	}
-
-	return editedHttpMessage
-}
-
-func getHttpHeader(httpMessage string) string {
-	start := getHttpPayloadStart(httpMessage)
-	if start < 0 {
-		return httpMessage
-	}
-	return httpMessage[0:start]
-}
-
-func getHttpPayloadStart(httpMessage string) int {
-	start := strings.Index(httpMessage, "\r\n\r\n")
-	if start < 0 {
-		return start
-	}
-	start += 4
-	return start
-}
-
-func (p *Proxy) editChunkedPayload(payload string, edit func(payload string) string) string {
-
-	ret := ""
-
-	for {
-		//find chunk size
-		index := strings.Index(payload, "\r\n")
-		if index < 0 {
-			return ret
-		}
-		payloadStart := index + 2
-		chunkSizeS := payload[0 : payloadStart-2]
-		chunkSize, _ := strconv.ParseInt(chunkSizeS, 16, 64)
-
-		if chunkSize == 0 {
-			ret += payload
-			return ret
-		}
-
-		chunkPayload := payload[payloadStart : payloadStart+int(chunkSize)]
-
-		//debug
-		//currentPayloadSize := strconv.FormatInt(int64(len(chunkPayload)), 16)
-		//currentPayloadSize = currentPayloadSize + ""
-
-		editChunkPayload := edit(chunkPayload)
-		ret += strconv.FormatInt(int64(len(editChunkPayload)), 16) + "\r\n" + editChunkPayload + "\r\n"
-		start := payloadStart + int(chunkSize) + 2
-		if start >= len(payload) {
-			payload = ""
-		} else {
-			payload = payload[start:]
-		}
-	}
-
-}
-
-func (p *Proxy) fixContentLength(originalData string, newData string) string {
-	reLe, _ := regexp.Compile("Content-Length: \\d*")
-	found := false
-	e := reLe.ReplaceAllStringFunc(newData, func(w string) string {
-		if !found {
-			s := string(w)
-			n := s[strings.LastIndex(s, ":")+2:]
-			numberOfCharacters, err := strconv.Atoi(n)
-			if err != nil {
-				// handle error
-				p.Log.Warn(err.Error())
-			}
-			numberOfCharacters += len(newData) - len(originalData)
-			found = true
-			return "Content-Length: " + strconv.Itoa(numberOfCharacters)
-		} else {
-			return w
-		}
-	})
-
-	return e
 }
