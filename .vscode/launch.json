@@ -10,8 +10,7 @@
             "request": "launch",
             "mode": "auto",
             "program": "cmd/tcp-proxy/main.go",
-            //"args": ["-r", "172.17.73.160:2375", "-l", ":2376", "-vv"],
-            "args": ["-r", "localhost:2375", "-l", ":2376", "-vv"],
+            "args": ["-r", "172.20.232.29:2375", "-l", ":2376", "-vv"],
         }
     ]
 }
